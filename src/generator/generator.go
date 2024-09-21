@@ -2,7 +2,6 @@ package generator
 
 import (
 	"crypto/rand"
-	"errors"
 	"fmt"
 
 	myImage "src/image"
@@ -34,10 +33,7 @@ type SK_PP struct {
 	SecretKey signature.Signer // Secret key stored by secure camera
 }
 
-// Input: an image and one permissible transformation t (TODO: set/combination of permissible transformations T)
-// Output: A proving key, a verification key and a signing key.
-func Generator(image myImage.I, t string) (PK_PP, VK_PP, SK_PP, error) {
-
+func Sign(image myImage.I) ([]byte, signature.PublicKey, signature.Signer, []byte) {
 	// 1. Generate a normal signature keys.
 	secretKey, err := ceddsa.New(1, rand.Reader) // Generate a secret key for signing
 	if err != nil {
@@ -45,10 +41,6 @@ func Generator(image myImage.I, t string) (PK_PP, VK_PP, SK_PP, error) {
 	}
 
 	publicKey := secretKey.Public() // Generate a public key for verifying
-
-	// Assign publicKey to an eddsa.PublicKey
-	var eddsa_publicKey eddsa.PublicKey
-	eddsa_publicKey.Assign(1, publicKey.Bytes())
 
 	// Instantiate hash function to be used when signing the image
 	hFunc := hash.MIMC_BN254.New()
@@ -60,35 +52,60 @@ func Generator(image myImage.I, t string) (PK_PP, VK_PP, SK_PP, error) {
 		fmt.Println(err.Error())
 	}
 
+	return normalSignature, publicKey, secretKey, big_endian_bytes_Image
+}
+
+// Input: an image and one permissible transformation t (TODO: set/combination of permissible transformations T)
+// Output: A proving key, a verification key and a signing key.
+func Generator(image myImage.I, t myTransformations.Transformation) (PK_PP, VK_PP, SK_PP, error) {
+
+	normalSignature, publicKey, secretKey, big_endian_bytes_Image := Sign(image)
+
 	// Assign the eddsa_signature into an eddsa.Signature
 	var eddsa_signature eddsa.Signature
 	eddsa_signature.Assign(1, normalSignature)
 
+	// Assign publicKey to an eddsa.PublicKey
+	var eddsa_publicKey eddsa.PublicKey
+	eddsa_publicKey.Assign(1, publicKey.Bytes())
+
 	// 2. Compile a compliance predicate, depending on the permissible Transformation(s)
 	var compliance_predicate constraint.ConstraintSystem // Generating a non-compile compliance predicate
-	if t == "Identity" {
+	var err error
 
-		// Specifying which circuit we are using
-		var circuit myTransformations.IdentityCircuit
+	frT := t.ToFr()
 
-		// Set circuit's public and secret fields
-		circuit.PublicKey = eddsa_publicKey
-		circuit.ImageSignature = eddsa_signature
-		circuit.ImageBytes = big_endian_bytes_Image
+	// If the transformation is identity, then set the params accordingly
+	// NOTE: This if statement is not necessary & should be moved to camera. Generator is predefined with allowed transformations
+	//			due to the choice in type of circuit.
+	if t.T == myTransformations.Identity {
+		frT.Params.X0 = 0
+		frT.Params.Y0 = 0
+		frT.Params.X1 = myImage.N - 1
+		frT.Params.Y1 = myImage.N - 1
+	}
 
-		// Dereferencing the
-		var frontendCircuit frontend.Circuit = &circuit
+	// Specifying which circuit we are using
+	var circuit myTransformations.CropCircuit
 
-		// When compiling a compliance_predicate (aka constraint system) in Gnark, we require:
-		//        - a specific circuit,
-		//        - elliptic curve (the security parameter of the bn254 curve has 254-bit prime number, 128-bit security)
-		// 		  - R1CS builder (aka a frontend.builder interface)
-		compliance_predicate, err = frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, frontendCircuit)
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-	} else {
-		return PK_PP{}, VK_PP{}, SK_PP{}, errors.New("transformation is not admissible")
+	// Set circuit's public and secret fields
+	circuit.PublicKey = eddsa_publicKey
+	circuit.ImageSignature = eddsa_signature
+	circuit.ImageBytes = big_endian_bytes_Image
+	circuit.FrImage = image.ToFrontendImage()
+	circuit.CroppedImage_in = image.ToFrontendImage()
+	circuit.Params = frT.Params
+
+	// Dereferencing the
+	var frontendCircuit frontend.Circuit = &circuit
+
+	// When compiling a compliance_predicate (aka constraint system) in Gnark, we require:
+	//        - a specific circuit,
+	//        - elliptic curve (the security parameter of the bn254 curve has 254-bit prime number, 128-bit security)
+	// 		  - R1CS builder (aka a frontend.builder interface)
+	compliance_predicate, err = frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, frontendCircuit)
+	if err != nil {
+		fmt.Println(err.Error())
 	}
 
 	// 3. Generate PCD keys from the compliance_predicate (A. one-time setup https://docs.gnark.consensys.io/HowTo/prove)

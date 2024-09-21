@@ -11,9 +11,9 @@ import (
 // Public fields: PublicKey, ImageSignature
 // Secret fields: ImageBytes
 type IdentityCircuit struct {
-	PublicKey      eddsa.PublicKey   `gnark:",public"`
-	ImageSignature eddsa.Signature   `gnark:",public"`
-	ImageBytes     frontend.Variable `gnark:","`
+	PublicKey           eddsa.PublicKey   `gnark:",public"`
+	ImageSignature      eddsa.Signature   `gnark:",public"` // Digital signature as eddsa.Signature
+	Original_ImageBytes frontend.Variable // Original image as Big Endian
 }
 
 // Defines the Compliance Predicate for the IdentityCircuit, which is used to enforce Identity tranformations only,
@@ -37,7 +37,7 @@ func (circuit *IdentityCircuit) Define(api frontend.API) error {
 	// This involves using the same hash function MiMC(ImageBytes + public key) to generate a secondary
 	// signature, and then verifying if the signatures match. This is done in a ZKP-circuit so the secret
 	// fields are not revealed.
-	eddsa.Verify(curve, circuit.ImageSignature, circuit.ImageBytes, circuit.PublicKey, &mimc)
+	eddsa.Verify(curve, circuit.ImageSignature, circuit.Original_ImageBytes, circuit.PublicKey, &mimc)
 
 	return nil
 }
