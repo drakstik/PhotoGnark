@@ -107,8 +107,8 @@ func (circuit *CropCircuit) CropFrontendImage(api frontend.API) myImage.Frontend
 
 	// Iterate over the entire N x N matrix
 
-	for y := 0; y < myImage.N; y++ {
-		for x := 0; x < myImage.N; x++ {
+	for y := 0; y < (myImage.N - 1); y++ {
+		for x := 0; x < (myImage.N - 1); x++ {
 			xFr := frontend.Variable(x)
 			yFr := frontend.Variable(y)
 
